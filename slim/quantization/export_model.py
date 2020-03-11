@@ -79,9 +79,10 @@ def main():
         not_quant_pattern = FLAGS.not_quant_pattern
     config = {
         'weight_quantize_type': 'channel_wise_abs_max',
-        'activation_quantize_type': 'moving_average_abs_max',
+        'activation_quantize_type': 'range_abs_max',
         'quantize_op_types': ['depthwise_conv2d', 'mul', 'conv2d'],
-        'not_quant_pattern': not_quant_pattern
+        'not_quant_pattern': not_quant_pattern,
+        'for_tensorrt': True
     }
 
     infer_prog = quant_aware(infer_prog, place, config, for_test=True)
@@ -89,16 +90,16 @@ def main():
     exe.run(startup_prog)
     checkpoint.load_params(exe, infer_prog, cfg.weights)
 
-    infer_prog, int8_program = convert(
-        infer_prog, place, config, save_int8=True)
+    #infer_prog, int8_program = convert(
+    #    infer_prog, place, config, save_int8=True)
 
     save_infer_model(
         os.path.join(FLAGS.output_dir, 'float'), exe, feed_vars, test_fetches,
         infer_prog)
 
-    save_infer_model(
-        os.path.join(FLAGS.output_dir, 'int'), exe, feed_vars, test_fetches,
-        int8_program)
+    #save_infer_model(
+    #    os.path.join(FLAGS.output_dir, 'int'), exe, feed_vars, test_fetches,
+    #    int8_program)
 
 
 if __name__ == '__main__':

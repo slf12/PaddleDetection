@@ -117,9 +117,10 @@ def main():
         not_quant_pattern = FLAGS.not_quant_pattern
     config = {
         'weight_quantize_type': 'channel_wise_abs_max',
-        'activation_quantize_type': 'moving_average_abs_max',
+        'activation_quantize_type': 'range_abs_max',
         'quantize_op_types': ['depthwise_conv2d', 'mul', 'conv2d'],
-        'not_quant_pattern': not_quant_pattern
+        'not_quant_pattern': not_quant_pattern,
+        'for_tensorrt': True
     }
 
     eval_prog = quant_aware(eval_prog, place, config, for_test=True)

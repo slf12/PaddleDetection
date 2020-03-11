@@ -136,6 +136,7 @@ class ResNet(object):
                 initializer=Constant(0.0), name=name + ".b_0"),
             act=act,
             name=name)
+        #out = fluid.layers.clip_relu(out, 7)
         return out
 
     def _conv_norm(self,
@@ -207,15 +208,29 @@ class ResNet(object):
 
         if self.norm_type in ['bn', 'sync_bn']:
             global_stats = True if self.freeze_norm else False
-            out = fluid.layers.batch_norm(
-                input=conv,
-                act=act,
-                name=bn_name + '.output.1',
-                param_attr=pattr,
-                bias_attr=battr,
-                moving_mean_name=bn_name + '_mean',
-                moving_variance_name=bn_name + '_variance',
-                use_global_stats=global_stats)
+            if not dcn_v2:
+                out = fluid.layers.batch_norm(
+                    input=conv,
+                    act=act,
+                    name=bn_name + '.output.1',
+                    param_attr=pattr,
+                    bias_attr=battr,
+                    moving_mean_name=bn_name + '_mean',
+                    moving_variance_name=bn_name + '_variance',
+                    use_global_stats=global_stats)
+            else:
+                with fluid.name_scope('bn_relu'):
+                    out = fluid.layers.batch_norm(
+                        input=conv,
+                        act=act,
+                        name=bn_name + '.output.1',
+                        param_attr=pattr,
+                        bias_attr=battr,
+                        moving_mean_name=bn_name + '_mean',
+                        moving_variance_name=bn_name + '_variance',
+                        use_global_stats=global_stats)
+
+            #out = fluid.layers.clip_relu(out, 7)
             scale = fluid.framework._get_var(pattr.name)
             bias = fluid.framework._get_var(battr.name)
         elif self.norm_type == 'affine_channel':
