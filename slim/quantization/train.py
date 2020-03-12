@@ -58,6 +58,41 @@ def load_global_step(exe, prog, path):
     fluid.io.load_vars(exe, path, prog, [v])
 
 
+def load_pretrain_model(exe, prog, path):
+    if os.path.exists(path):
+        logger.info('Pretrained model dir: {}'.format(path))
+        load_vars = []
+        load_fail_vars = []
+
+        def var_shape_matched(var, shape):
+            """
+            Check whehter persitable variable shape is match with current network
+            """
+            var_exist = os.path.exists(os.path.join(path, var.name))
+            return var_exist
+
+        for x in prog.list_vars():
+            if isinstance(x, fluid.framework.Parameter):
+                shape = tuple(fluid.global_scope().find_var(x.name).get_tensor()
+                              .shape())
+                if var_shape_matched(x, shape):
+                    load_vars.append(x)
+                else:
+                    load_fail_vars.append(x)
+
+        fluid.io.load_vars(exe, dirname=path, vars=load_vars)
+        for var in load_vars:
+            logger.info("Parameter[{}] loaded sucessfully!".format(var.name))
+        for var in load_fail_vars:
+            logger.info(
+                "Parameter[{}] don't exist or shape does not match current network, skip"
+                " to load it.".format(var.name))
+        logger.info("{}/{} pretrained parameters loaded successfully!".format(
+            len(load_vars), len(load_vars) + len(load_fail_vars)))
+    else:
+        logger.info("pretrained model dir {} doesn't exist".format(path))
+
+
 def main():
     env = os.environ
     FLAGS.dist = 'PADDLE_TRAINER_ID' in env and 'PADDLE_TRAINERS_NUM' in env
@@ -76,8 +111,8 @@ def main():
 
     merge_config(FLAGS.opt)
 
-    if 'log_iter' not in cfg:
-        cfg.log_iter = 20
+    #if 'log_iter' not in cfg:
+    cfg.log_iter = 20
 
     # check if set use_gpu=True in paddlepaddle cpu version
     check_gpu(cfg.use_gpu)
@@ -113,6 +148,16 @@ def main():
             train_fetches = model.train(feed_vars)
             loss = train_fetches['loss']
             lr = lr_builder()
+            for var in train_prog.global_block().all_parameters():
+                if isinstance(var, fluid.framework.Parameter) and (
+                        'clip_relu' in var.name):
+                    var.stop_gradient = True
+                    #var.trainable = False
+                    #print("{} not train".format(var.name))
+                    pass
+                else:
+                    #print("{} train".format(var.name))
+                    pass
             optimizer = optim_builder(lr)
             optimizer.minimize(loss)
 
@@ -174,9 +219,10 @@ def main():
         'weight_quantize_type': 'channel_wise_abs_max',
         'activation_quantize_type': 'moving_average_abs_max',
         'quantize_op_types': ['depthwise_conv2d', 'mul', 'conv2d'],
-        'not_quant_pattern': not_quant_pattern
+        'not_quant_pattern': not_quant_pattern,
+        'for_tensorrt': False
     }
-
+    #print(np.array(fluid.global_scope().find_var('clip_relu_0.w_0').get_tensor()))
     ignore_params = cfg.finetune_exclude_pretrained_params \
                  if 'finetune_exclude_pretrained_params' in cfg else []
 
@@ -191,7 +237,9 @@ def main():
                 train_prog,
                 cfg.pretrain_weights,
                 ignore_params=ignore_params)
-    # insert quantize op in train_prog, return type is CompiledProgram
+            #load_pretrain_model(exe, train_prog, cfg.pretrain_weights) 
+
+        # insert quantize op in train_prog, return type is CompiledProgram
     train_prog_quant = quant_aware(train_prog, place, config, for_test=False)
 
     compiled_train_prog = train_prog_quant.with_data_parallel(
@@ -244,12 +292,21 @@ def main():
         outs = exe.run(compiled_train_prog, fetch_list=train_values)
         stats = {k: np.array(v).mean() for k, v in zip(train_keys, outs[:-1])}
 
+        #logger.info(np.array(fluid.global_scope().find_var('clip_relu_0.w_0').get_tensor()))
         train_stats.update(stats)
         logs = train_stats.log()
         if it % cfg.log_iter == 0 and (not FLAGS.dist or trainer_id == 0):
             strs = 'iter: {}, lr: {:.6f}, {}, time: {:.3f}, eta: {}'.format(
                 it, np.mean(outs[-1]), logs, time_cost, eta)
             logger.info(strs)
+            threshold = []
+            for var in train_prog.global_block().all_parameters():
+                if 'clip_relu' in var.name:
+                    var_c = fluid.global_scope().find_var(var.name)
+                    threshold.append(np.array(var_c.get_tensor())[0])
+            if it % 500 == 0:
+                logger.info(threshold)
+            #logger.info(np.array(fluid.global_scope().find_var('clip_relu_0.w_0').get_tensor()))
 
         if (it > 0 and it % cfg.snapshot_iter == 0 or it == cfg.max_iters - 1) \
            and (not FLAGS.dist or trainer_id == 0):
